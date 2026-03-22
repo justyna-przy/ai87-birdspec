@@ -1,18 +1,26 @@
 /*
  * BirdSpec MAX78002 — On-Device Inference Application
  *
- * SW4 (PB_Get(0)): Start / dismiss recording
+ * Default mode: continuous sliding-window inference.
+ *   - Mic records continuously into a 3-second ring buffer.
+ *   - Every ~1 second a new spectrogram is computed on the latest 3 s.
+ *   - RMS gate: if the window is too quiet, skip inference and show
+ *     "Listening..." instead of running the CNN.
+ *   - Spectrogram and top-3 results update live on the TFT.
  *
- * State machine:
- *   IDLE  →(SW4)→  RECORDING  →(done)→  PROCESSING  →  SHOWING
- *                 →(timeout)→  SHOWING  [shows error]
+ * Optional UART mode (press SW4 to toggle):
+ *   - Stops continuous recording.
+ *   - Accepts LOAD_PCM / REC / INFER / STATUS / BATCH commands.
+ *   - Press SW4 again to return to continuous mode.
+ *
+ * Button mapping (MAX78002 EV kit):
+ *   SW4  (PB_Get(0))  — toggle UART mode on/off
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include "mxc.h"
-#include "board.h"
 #include "pb.h"
 #include "led.h"
 #include "cnn.h"
@@ -20,34 +28,31 @@
 #include "audio_capture.h"
 #include "spectrogram.h"
 #include "display.h"
+#include "uart_cmd.h"
+#include "sd_batch.h"
 
 /* ------------------------------------------------------------------ */
-/* Shared buffers                                                        */
+/* Shared globals (also extern'd by uart_cmd.c)                        */
 /* ------------------------------------------------------------------ */
 
-static int8_t   g_cnn_input[64 * 128];
-static result_t g_results[3];
-static uint32_t g_latency_us = 0;
+int8_t   g_cnn_input[64 * 128];
+result_t g_results[INFERENCE_TOP_K_MAX];
+uint32_t g_last_latency_us = 0;
+uint32_t g_last_spec_us    = 0;
 
 /* ------------------------------------------------------------------ */
 /* State machine                                                        */
 /* ------------------------------------------------------------------ */
 
 typedef enum {
-    APP_IDLE,
-    APP_RECORDING,
-    APP_PROCESSING,
-    APP_SHOWING,
+    APP_LISTENING,   /* default: continuous sliding-window inference    */
+    APP_UART_MODE,   /* UART command mode (SW4 to exit)                 */
 } app_state_t;
 
-static app_state_t state = APP_IDLE;
-
-/* Recording timeout: 4 s = 200 × 20 ms ticks */
-#define RECORD_TIMEOUT_TICKS  200
-static int record_ticks = 0;
+static app_state_t state = APP_LISTENING;
 
 /* ------------------------------------------------------------------ */
-/* Button edge detection (polled at 50 Hz)                              */
+/* Button edge detection (polled in main loop)                         */
 /* ------------------------------------------------------------------ */
 
 static int btn0_prev = 0;
@@ -66,110 +71,110 @@ static int btn0_edge(void)
 
 int main(void)
 {
-    /* Re-sync console UART baud rate after clock switch */
-    MXC_SYS_Clock_Select(MXC_SYS_CLOCK_IPO);
+    /* --- System init ------------------------------------------------ */
+    MXC_SYS_Clock_Select(MXC_SYS_CLOCK_IPO);    /* 120 MHz             */
     SystemCoreClockUpdate();
-    Console_Init();
+    Console_Init();                               /* re-sync UART baud  */
 
     MXC_ICC_Enable(MXC_ICC0);
+    MXC_GCR->ipll_ctrl |= MXC_F_GCR_IPLL_CTRL_EN; /* IPLL for CNN     */
+
+    /* Enable DWT cycle counter for spectrogram timing */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT       = 0;
+    DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
+
     MXC_Delay(MXC_DELAY_MSEC(200));
 
     printf("\n\n=== BirdSpec MAX78002 ===\n");
     printf("Clock: %lu Hz\n", (unsigned long)SystemCoreClock);
 
-    /* ---- Peripheral init ------------------------------------------ */
+    /* --- Peripheral init ------------------------------------------- */
     display_init();
-    display_status("Loading CNN weights...");
+    display_status("Loading CNN...");
 
     inference_init();
+
     display_status("Init spectrogram...");
-
     spectrogram_init();
-    display_status("Init microphone...");
 
+    display_status("Init microphone...");
     audio_capture_init();
 
-    display_status("Ready  |  SW4: record 3s");
-    printf("[main] Boot complete. Press SW4 to record.\n");
+    uart_cmd_init();
+    sd_batch_init();
 
-    /* ---- Main loop ------------------------------------------------- */
+    /* Start continuous capture immediately */
+    audio_capture_start();
+
+    display_status("Listening... (filling 3s buffer)");
+    printf("[main] Boot complete. Continuous mode. SW4 = UART mode.\n");
+
+    /* --- Main loop -------------------------------------------------- */
     while (1) {
+
         switch (state) {
 
-        /* ---- IDLE -------------------------------------------------- */
-        case APP_IDLE:
+        /* ---- LISTENING (default) ----------------------------------- */
+        case APP_LISTENING:
+
+            if (audio_capture_snapshot_ready()) {
+
+                float rms = audio_capture_rms();
+
+                if (rms < AUDIO_RMS_THRESHOLD) {
+                    /* Quiet — skip inference, keep listening */
+                    display_status("Listening... (quiet)");
+                } else {
+                    /* Compute spectrogram */
+                    uint32_t t0 = DWT->CYCCNT;
+                    spectrogram_compute(audio_capture_get_buffer(),
+                                        AUDIO_CLIP_SAMPLES, g_cnn_input);
+                    g_last_spec_us = (DWT->CYCCNT - t0)
+                                     / (SystemCoreClock / 1000000U);
+
+                    /* Run CNN inference */
+                    g_last_latency_us = inference_run(g_cnn_input,
+                                                      g_results, 3);
+
+                    /* Update display */
+                    display_spectrogram(g_cnn_input);
+                    display_results(g_results, 3, g_last_latency_us);
+
+                    printf("[main] RMS=%.0f  lat=%lu us  spec=%lu us\n",
+                           (double)rms,
+                           (unsigned long)g_last_latency_us,
+                           (unsigned long)g_last_spec_us);
+                }
+
+                /* Slide window forward 1 s and re-arm DMA */
+                audio_capture_slide();
+            }
+
+            /* SW4 → enter UART mode */
             if (btn0_edge()) {
-                record_ticks = 0;
-                state = APP_RECORDING;
-                display_status("Recording... (3 s)");
-                LED_On(0);
-                printf("[main] Recording started.\n");
+                audio_capture_stop();
+                display_status("UART mode  |  SW4: return to listening");
+                printf("[main] Entering UART mode.\n");
+                state = APP_UART_MODE;
+            }
+            break;
+
+        /* ---- UART MODE --------------------------------------------- */
+        case APP_UART_MODE:
+
+            uart_cmd_poll();
+
+            /* SW4 → return to continuous listening */
+            if (btn0_edge()) {
+                printf("[main] Returning to listening mode.\n");
                 audio_capture_start();
-            }
-            break;
-
-        /* ---- RECORDING --------------------------------------------- */
-        case APP_RECORDING: {
-            record_ticks++;
-
-            /* Show countdown on TFT so user knows we're alive */
-            if (record_ticks % 25 == 0) {   /* every 500 ms */
-                int secs_left = 3 - (record_ticks / 50);
-                char buf[48];
-                snprintf(buf, sizeof(buf), "Recording... %d s left", secs_left > 0 ? secs_left : 0);
-                display_status(buf);
-                LED_Toggle(0);
-            }
-
-            if (audio_capture_is_done()) {
-                LED_Off(0);
-                printf("[main] Capture done (%d samples).\n", AUDIO_CLIP_SAMPLES);
-                state = APP_PROCESSING;
-                display_status("Computing spectrogram...");
-            } else if (record_ticks >= RECORD_TIMEOUT_TICKS) {
-                /* DMA never completed — microphone likely not responding */
-                LED_Off(0);
-                printf("[main] ERROR: recording timed out — mic not detected.\n");
-                display_status("MIC ERROR: no audio (check JH4)");
-                state = APP_SHOWING;   /* let SW4 dismiss */
+                display_status("Listening... (filling 3s buffer)");
+                state = APP_LISTENING;
             }
             break;
         }
 
-        /* ---- PROCESSING -------------------------------------------- */
-        case APP_PROCESSING: {
-            printf("[main] Computing spectrogram...\n");
-            spectrogram_compute(audio_capture_get_buffer(),
-                                AUDIO_CLIP_SAMPLES, g_cnn_input);
-
-            display_status("Running inference...");
-            printf("[main] Running inference...\n");
-
-            g_latency_us = inference_run(g_cnn_input, g_results, 3);
-
-            printf("[main] Done. Latency: %lu us\n", (unsigned long)g_latency_us);
-            for (int i = 0; i < 3; i++) {
-                printf("  #%d idx=%-3d conf=%.1f%%\n",
-                       i + 1, g_results[i].class_idx,
-                       (double)g_results[i].confidence);
-            }
-
-            display_spectrogram(g_cnn_input);
-            display_results(g_results, 3, g_latency_us);
-            state = APP_SHOWING;
-            break;
-        }
-
-        /* ---- SHOWING ----------------------------------------------- */
-        case APP_SHOWING:
-            if (btn0_edge()) {
-                state = APP_IDLE;
-                display_status("Ready  |  SW4: record 3s");
-                printf("[main] Back to IDLE.\n");
-            }
-            break;
-        }
-
-        MXC_Delay(MXC_DELAY_MSEC(20)); /* 50 Hz poll */
+        MXC_Delay(MXC_DELAY_MSEC(5)); /* 200 Hz poll, low CPU overhead */
     }
 }

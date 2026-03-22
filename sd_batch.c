@@ -22,6 +22,26 @@ static int8_t tensor_buf[TENSOR_SIZE];
 /* Helpers                                                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Read one line from a FatFS file without using f_gets (which requires
+ * FF_USE_STRFUNC enabled in ffconf.h).  Reads byte-by-byte until '\n'
+ * or EOF.  Returns buf on success, NULL at EOF.
+ */
+static char *fatfs_readline(FIL *fp, char *buf, int maxlen)
+{
+    UINT br;
+    int  n = 0;
+    while (n < maxlen - 1) {
+        if (f_read(fp, &buf[n], 1, &br) != FR_OK || br == 0)
+            break;
+        if (buf[n] == '\n') { n++; break; }
+        if (buf[n] != '\r') n++;   /* strip CR from CRLF */
+    }
+    if (n == 0) return NULL;
+    buf[n] = '\0';
+    return buf;
+}
+
 static bool sd_mount(void)
 {
     FRESULT res = f_mount(&fat_fs, "0:", 1);
@@ -34,52 +54,6 @@ static bool sd_mount(void)
     }
     sd_mounted = true;
     return true;
-}
-
-/* Read one text line from FatFS without relying on FF_USE_STRFUNC/f_gets. */
-static bool sd_readline(FIL *fp, char *dst, size_t dst_len)
-{
-    if (!fp || !dst || dst_len < 2) {
-        return false;
-    }
-
-    size_t i = 0;
-    bool got_any = false;
-
-    while (i < (dst_len - 1)) {
-        char ch = 0;
-        UINT br = 0;
-        FRESULT fr = f_read(fp, &ch, 1, &br);
-        if (fr != FR_OK || br == 0) {
-            break;
-        }
-
-        got_any = true;
-        if (ch == '\r') {
-            continue;
-        }
-        if (ch == '\n') {
-            break;
-        }
-
-        dst[i++] = ch;
-    }
-
-    dst[i] = '\0';
-
-    /* If the buffer filled before newline, consume the rest of this line. */
-    if (i == (dst_len - 1)) {
-        while (1) {
-            char ch = 0;
-            UINT br = 0;
-            FRESULT fr = f_read(fp, &ch, 1, &br);
-            if (fr != FR_OK || br == 0 || ch == '\n') {
-                break;
-            }
-        }
-    }
-
-    return got_any;
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,9 +92,9 @@ void sd_batch_run(int max_samples)
     result_t results[INFERENCE_TOP_K_MAX];
 
     /* Skip header line */
-    (void)sd_readline(&labels_file, line, sizeof(line));
+    fatfs_readline(&labels_file, line, sizeof(line));
 
-    while (sd_readline(&labels_file, line, sizeof(line))) {
+    while (fatfs_readline(&labels_file, line, sizeof(line)) != NULL) {
         if (max_samples > 0 && n_total >= max_samples) break;
 
         /* Parse "filename,class_idx" */

@@ -13,6 +13,8 @@
  *   4. 10·log10 dB, normalize by global max (ref=max), clamp [-80, 0]
  *   5. Remap to uint8 [0, 255], resize 128×184 → 64×128
  *   6. Flip freq axis (row 0 = lowest mel), uint8 → int8 (subtract 128)
+ *   7. Per-sample z-score norm: clamp((val-mean)/std, -3,3)/3*127
+ *      (matches Python PerSampleNorm transform applied during training)
  *
  * Output shape: (1, 64, 128) int8  →  8192 bytes, ready for cnn_load_input.
  */

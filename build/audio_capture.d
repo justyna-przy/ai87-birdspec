@@ -1,20 +1,21 @@
 C:/Users/shado/Year3Projects/Block3.2/EmbeddedHardware/msdk/Examples/MAX78002/ai87-birdspec/build/audio_capture.o: \
  audio_capture.c \
- c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\string.h \
+ c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\math.h \
+ c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\reent.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\_ansi.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\newlib.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\_newlib_version.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\config.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\machine\ieeefp.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\features.h \
- c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\reent.h \
- c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\_ansi.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\lib\gcc\arm-none-eabi\10.3.1\include\stddef.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\_types.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\machine\_types.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\machine\_default_types.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\lock.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\cdefs.h \
+ c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\_ansi.h \
+ c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\string.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\_locale.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\strings.h \
  c:\users\shado\year3projects\block3.2\embeddedhardware\msdk\tools\gnutools\10.3\arm-none-eabi\include\sys\string.h \

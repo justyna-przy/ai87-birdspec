@@ -130,6 +130,7 @@ void spectrogram_compute(const int16_t *audio, int n_samples, int8_t *out)
     }
 
     /* ---- 4. Resize 128 mel × n_frames  →  64 × 128  --------------- */
+    /* (also: per-sample normalisation applied in step 5 after output written) */
     /* Then flip freq axis and convert uint8 → int8.
      *
      * Output layout: out[row * 128 + col]
@@ -181,6 +182,47 @@ void spectrogram_compute(const int16_t *audio, int n_samples, int8_t *out)
 
             /* int8 = uint8 - 128 */
             out[out_row * SPEC_OUT_FRAMES + col] = (int8_t)(u8 - 128);
+        }
+    }
+
+    /* ---- 5. Per-sample normalisation (matches Python PerSampleNorm) ----
+     *
+     * Python transform (applied after ai8x.normalize):
+     *   z = (x - mean) / std,  clamp to [-3, 3],  divide by 3  → [-1, 1]
+     *
+     * Firmware equivalent (int8 domain):
+     *   z = clamp((val - mean) / std, -3, 3) / 3 * 127
+     *
+     * This corrects per-clip brightness variation caused by ref=np.max in
+     * the training pipeline's power_to_db call.  Without it the model has
+     * to learn loudness invariance the hard way.
+     */
+    {
+        const int N = SPEC_OUT_MELS * SPEC_OUT_FRAMES;  /* 8192 */
+        float sum = 0.0f;
+        float sq_sum = 0.0f;
+        int i;
+
+        for (i = 0; i < N; i++) {
+            float v = (float)out[i];
+            sum    += v;
+            sq_sum += v * v;
+        }
+
+        float mean = sum / (float)N;
+        float var  = sq_sum / (float)N - mean * mean;
+        float std  = (var > 1e-12f) ? sqrtf(var) : 1e-6f;
+
+        for (i = 0; i < N; i++) {
+            float z = ((float)out[i] - mean) / std;
+            if (z < -3.0f) z = -3.0f;
+            if (z >  3.0f) z =  3.0f;
+            z = z / 3.0f * 127.0f;
+            /* Round to nearest int8 */
+            int iv = (int)(z + (z >= 0.0f ? 0.5f : -0.5f));
+            if (iv < -127) iv = -127;
+            if (iv >  127) iv =  127;
+            out[i] = (int8_t)iv;
         }
     }
 }

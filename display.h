@@ -2,7 +2,7 @@
 #define DISPLAY_H
 
 #include <stdint.h>
-#include "inference.h"   /* for result_t */
+#include "inference.h"
 
 /*
  * TFT display driver wrapper for the MAX78002 EV kit 3.5" display.

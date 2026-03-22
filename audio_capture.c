@@ -1,22 +1,27 @@
 /*
- * audio_capture.c — I2S DMA microphone capture for MAX78002 EV kit
+ * audio_capture.c — Sliding-window I2S DMA capture for MAX78002 EV kit.
  *
- * Pattern taken directly from MSDK Examples/MAX78002/I2S_DMA/main.c.
+ * DMA pattern taken from MSDK Examples/MAX78002/I2S_DMA (proven working).
  *
- * Hardware: SPH0645 I2S MEMS mic on the EV kit (header JH4).
- *   - 18-bit audio, left-justified in a 32-bit I2S word.
- *   - We extract int16 by taking the top 16 bits (right-shift 16).
- *   - MONO_LEFT_CH — right channel is zero-filled by the mic.
+ * Hardware: SPH0645 I2S MEMS mic on EV kit header JH4.
+ *   18-bit audio, left-justified in a 32-bit I2S word.
+ *   Top 16 bits extracted by right-shifting 16 in the callback.
  *
- * Clock: clkdiv=5 assumes a 12.288 MHz I2S source clock, giving:
+ * Clock: clkdiv=5 with ERFO source (12.288 MHz):
  *   BCLK = 12.288 MHz / (2*(5+1)) = 1.024 MHz
- *   LRCK = 1.024 MHz / 64          = 16 kHz
+ *   LRCK = 1.024 MHz / 64          = 16 kHz  ✓
  *
- * Capture: chunked DMA, CHUNK_SAMPLES int32 words at a time.
- *   DMA0_IRQHandler → MXC_DMA_Handler() → i2s_dma_callback().
- *   Callback accumulates chunks into pcm_buf[] until AUDIO_CLIP_SAMPLES.
+ * Sliding window:
+ *   pcm_buf[48000] always contains the latest 3 seconds.
+ *   DMA fills in CHUNK_SAMPLES=256 chunks → callback chains next chunk.
+ *   Every AUDIO_SLIDE_SAMPLES=16000 new samples, snapshot_ready is raised.
+ *   Main loop processes pcm_buf, then calls audio_capture_slide() which:
+ *     1. memmove(pcm_buf, pcm_buf+16000, 64000 bytes)  — drop oldest 1 s
+ *     2. Resets write pointer to 32000
+ *     3. Re-arms DMA for the next 16000-sample slice
  */
 
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include "mxc.h"
@@ -29,21 +34,21 @@
 /* Buffers                                                              */
 /* ------------------------------------------------------------------ */
 
-/* Same size as the MSDK I2S_DMA example — proven to work */
 #define CHUNK_SAMPLES  256
 
-static int32_t  dma_chunk[CHUNK_SAMPLES];   /* one DMA transfer         */
-static int16_t  pcm_buf[AUDIO_CLIP_SAMPLES];/* final 16-bit PCM output  */
+static int32_t dma_chunk[CHUNK_SAMPLES];          /* 1 KB — DMA target  */
+static int16_t pcm_buf[AUDIO_CLIP_SAMPLES];       /* 96 KB — 3-s window */
 
 /* ------------------------------------------------------------------ */
 /* State                                                                */
 /* ------------------------------------------------------------------ */
 
-static volatile int  samples_collected = 0;
-static volatile bool capture_done      = false;
+static volatile int  ring_pos        = 0;     /* next write position   */
+static volatile bool snapshot_ready  = false; /* 16000 new samples in  */
+static volatile bool capture_active  = false;
 
 /* ------------------------------------------------------------------ */
-/* DMA IRQ — overrides the weak default in the vector table            */
+/* DMA IRQ — overrides the weak default symbol in the startup table    */
 /* ------------------------------------------------------------------ */
 
 void DMA0_IRQHandler(void)
@@ -52,52 +57,59 @@ void DMA0_IRQHandler(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* DMA completion callback (registered with MXC_I2S_RegisterDMACallback) */
+/* DMA completion callback                                              */
 /* ------------------------------------------------------------------ */
 
-static void i2s_dma_callback(int channel, int error)
+static void i2s_dma_callback(int ch, int err)
 {
-    (void)channel;
+    (void)ch;
 
-    if (error != E_NO_ERROR) {
-        capture_done = true;    /* unblock caller; error visible in serial */
+    if (err != E_NO_ERROR) {
+        /* On error: mark snapshot ready so the main loop isn't blocked */
+        snapshot_ready = true;
         return;
     }
 
-    /* Copy this chunk: top 16 bits of each 32-bit I2S word */
-    for (int i = 0; i < CHUNK_SAMPLES && samples_collected < AUDIO_CLIP_SAMPLES; i++) {
-        pcm_buf[samples_collected++] = (int16_t)(dma_chunk[i] >> 16);
-    }
+    /* How many samples can we still fit before we hit the end? */
+    int space = AUDIO_CLIP_SAMPLES - ring_pos;
+    int n     = (CHUNK_SAMPLES < space) ? CHUNK_SAMPLES : space;
 
-    if (samples_collected >= AUDIO_CLIP_SAMPLES) {
-        capture_done = true;
-    } else {
-        /* Restart DMA for the next chunk — exact pattern from MSDK example */
+    for (int i = 0; i < n; i++) {
+        pcm_buf[ring_pos + i] = (int16_t)(dma_chunk[i] >> 16);
+    }
+    ring_pos += n;
+
+    if (ring_pos >= AUDIO_CLIP_SAMPLES) {
+        /*
+         * Window is full — signal main loop.
+         * Do NOT re-arm here; audio_capture_slide() will re-arm after
+         * the main loop has finished processing this window.
+         */
+        snapshot_ready = true;
+    } else if (capture_active) {
+        /* Exact MSDK I2S_DMA pattern: release channel, then re-acquire */
         MXC_DMA_ReleaseChannel(0);
         MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* Public API                                                           */
+/* Initialisation                                                       */
 /* ------------------------------------------------------------------ */
 
 void audio_capture_init(void)
 {
-    /* DMA must be initialised before I2S, and before registering
-     * the callback, so that channel handles are valid. */
     MXC_DMA_Init();
 
     /*
-     * Mirror the MSDK I2S_DMA example exactly.
-     * Key: pass rxData pointing to a real buffer so MXC_I2S_Init()
-     * enables the I2S RX path.  Without this the FIFO never fills
-     * and the DMA waits indefinitely.
+     * Replicate the MSDK I2S_DMA example init exactly — these extra fields
+     * (sampleSize, bitsWord, adjust) are required for correct 32-bit operation.
+     * rxData must point to a real buffer to enable the I2S RX path.
      */
     mxc_i2s_req_t req;
     memset(&req, 0, sizeof(req));
 
-    req.wordSize    = MXC_I2S_WSIZE_WORD;            /* 32-bit       */
+    req.wordSize    = MXC_I2S_WSIZE_WORD;
     req.sampleSize  = MXC_I2S_SAMPLESIZE_THIRTYTWO;
     req.bitsWord    = 32;
     req.adjust      = MXC_I2S_ADJUST_LEFT;
@@ -106,10 +118,10 @@ void audio_capture_init(void)
     req.channelMode = MXC_I2S_INTERNAL_SCK_WS_0;
     req.stereoMode  = MXC_I2S_MONO_LEFT_CH;
     req.bitOrder    = MXC_I2S_MSB_FIRST;
-    req.clkdiv      = 5;            /* 12.288 MHz / 12 / 64 = 16 kHz */
+    req.clkdiv      = 5;
     req.rawData     = NULL;
     req.txData      = NULL;
-    req.rxData      = dma_chunk;    /* real buffer — enables I2S RX   */
+    req.rxData      = dma_chunk;    /* real buffer — enables I2S RX path */
     req.length      = CHUNK_SAMPLES;
 
     int ret = MXC_I2S_Init(&req);
@@ -122,33 +134,73 @@ void audio_capture_init(void)
     MXC_I2S_RegisterDMACallback(i2s_dma_callback);
 
     NVIC_EnableIRQ(DMA0_IRQn);
-    /* __enable_irq() is already called by startup code; safe to call again */
     __enable_irq();
 
-    printf("[audio] I2S init OK — clkdiv=%d, 32-bit mono, DMA chunk=%d\n",
-           5, CHUNK_SAMPLES);
+    printf("[audio] I2S init OK — 16 kHz mono 32-bit, chunk=%d samples\n",
+           CHUNK_SAMPLES);
 }
+
+/* ------------------------------------------------------------------ */
+/* Start / stop                                                         */
+/* ------------------------------------------------------------------ */
 
 void audio_capture_start(void)
 {
-    samples_collected = 0;
-    capture_done      = false;
+    ring_pos       = 0;
+    snapshot_ready = false;
+    capture_active = true;
     memset(pcm_buf, 0, sizeof(pcm_buf));
 
-    /* Release in case Init or a previous capture claimed the channel */
     MXC_DMA_ReleaseChannel(0);
-
-    /* Start first DMA chunk — callback chains the rest */
     int ret = MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
-    if (ret != E_NO_ERROR) {
+    if (ret < E_NO_ERROR) {
         printf("[audio] RXDMAConfig failed: %d\n", ret);
-        capture_done = true; /* prevent infinite wait */
+        snapshot_ready = true; /* prevent infinite wait */
     }
 }
 
+void audio_capture_stop(void)
+{
+    capture_active = false;
+    MXC_I2S_RXDisable();
+}
+
+/* ------------------------------------------------------------------ */
+/* Sliding window                                                       */
+/* ------------------------------------------------------------------ */
+
+void audio_capture_slide(void)
+{
+    /*
+     * Shift out the oldest AUDIO_SLIDE_SAMPLES (1 second) and make room
+     * for the next second.  memmove is safe with overlapping regions.
+     * At 120 MHz this moves 64 KB in ~130 µs — fine in the main loop.
+     */
+    memmove(pcm_buf,
+            pcm_buf + AUDIO_SLIDE_SAMPLES,
+            (AUDIO_CLIP_SAMPLES - AUDIO_SLIDE_SAMPLES) * sizeof(int16_t));
+
+    ring_pos       = AUDIO_CLIP_SAMPLES - AUDIO_SLIDE_SAMPLES; /* = 32000 */
+    snapshot_ready = false;
+    capture_active = true;
+
+    MXC_DMA_ReleaseChannel(0);
+    MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
+}
+
+/* ------------------------------------------------------------------ */
+/* Public accessors                                                     */
+/* ------------------------------------------------------------------ */
+
+bool audio_capture_snapshot_ready(void)
+{
+    return snapshot_ready;
+}
+
+/* Legacy one-shot poll used by uart_cmd.c REC handler */
 bool audio_capture_is_done(void)
 {
-    return capture_done;
+    return snapshot_ready;
 }
 
 int16_t *audio_capture_get_buffer(void)
@@ -156,9 +208,24 @@ int16_t *audio_capture_get_buffer(void)
     return pcm_buf;
 }
 
-void audio_capture_load_pcm(const int16_t *src, int n_samples)
+int16_t *audio_capture_get_pcm_buf(void)
 {
-    if (n_samples > AUDIO_CLIP_SAMPLES) n_samples = AUDIO_CLIP_SAMPLES;
-    memcpy(pcm_buf, src, n_samples * sizeof(int16_t));
-    capture_done = true;
+    return pcm_buf;
+}
+
+void audio_capture_load_pcm(const int16_t *src, int n)
+{
+    if (n > AUDIO_CLIP_SAMPLES) n = AUDIO_CLIP_SAMPLES;
+    memcpy(pcm_buf, src, (size_t)n * sizeof(int16_t));
+    snapshot_ready = true;
+}
+
+float audio_capture_rms(void)
+{
+    int64_t sum_sq = 0;
+    for (int i = 0; i < AUDIO_CLIP_SAMPLES; i++) {
+        int32_t s = pcm_buf[i];
+        sum_sq += s * s;
+    }
+    return sqrtf((float)(sum_sq / AUDIO_CLIP_SAMPLES));
 }

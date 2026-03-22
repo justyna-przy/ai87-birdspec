@@ -425,7 +425,7 @@
 #undef __ARM_NEON_FP
 #define __THUMB_INTERWORK__ 1
 #define __ARM_ARCH_7EM__ 1
-#define __ARM_PCS 1
+#define __ARM_PCS_VFP 1
 #define __ARM_EABI__ 1
 #undef __FDPIC__
 #define __ARM_ARCH_EXT_IDIV__ 1
@@ -455,7 +455,6 @@
 #define FLIP_SCREEN 1
 #define SWAP_XY 1
 #define CAMERA_OV7692 1
-#define FONT_LiberationSans16x16 1
 #define MXC_SPI_V1 1
 #define MXC_SPI_V1 1
 #define ARM_MATH_CM4 1

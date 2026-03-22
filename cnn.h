@@ -6,7 +6,7 @@
 **************************************************************************************************/
 
 /*
- * This header file was automatically @generated for the ai87-birdspec network from a template.
+ * This header file was automatically @generated for the ai87-birdspec-dw1 network from a template.
  * Please do not edit; instead, edit the template and regenerate.
  */
 
@@ -23,21 +23,22 @@ typedef int16_t q15_t;
 
 /*
   SUMMARY OF OPS
-  Hardware: 98,199,104 ops (97,257,024 macc; 937,984 comp; 4,096 add; 0 mul; 0 bitwise)
+  Hardware: 117,089,888 ops (116,131,424 macc; 954,368 comp; 4,096 add; 0 mul; 0 bitwise)
     Layer 0: 2,621,440 ops (2,359,296 macc; 262,144 comp; 0 add; 0 mul; 0 bitwise)
     Layer 1: 38,141,952 ops (37,748,736 macc; 393,216 comp; 0 add; 0 mul; 0 bitwise)
     Layer 2: 37,945,344 ops (37,748,736 macc; 196,608 comp; 0 add; 0 mul; 0 bitwise)
     Layer 3: 18,956,288 ops (18,874,368 macc; 81,920 comp; 0 add; 0 mul; 0 bitwise)
-    Layer 4: 528,384 ops (524,288 macc; 4,096 comp; 0 add; 0 mul; 0 bitwise)
-    Layer 5: 5,696 ops (1,600 macc; 0 comp; 4,096 add; 0 mul; 0 bitwise)
+    Layer 4: 18,890,752 ops (18,874,368 macc; 16,384 comp; 0 add; 0 mul; 0 bitwise)
+    Layer 5: 528,384 ops (524,288 macc; 4,096 comp; 0 add; 0 mul; 0 bitwise)
+    Layer 6: 5,728 ops (1,632 macc; 0 comp; 4,096 add; 0 mul; 0 bitwise)
 
   RESOURCE USAGE
-  Weight memory: 245,600 bytes out of 2,396,160 bytes total (10.2%)
+  Weight memory: 393,088 bytes out of 2,396,160 bytes total (16.4%)
   Bias memory:   0 bytes out of 8,192 bytes total (0.0%)
 */
 
 /* Number of outputs for this network */
-#define CNN_NUM_OUTPUTS 50
+#define CNN_NUM_OUTPUTS 51
 
 /* Port pin actions used to signal that processing is active */
 

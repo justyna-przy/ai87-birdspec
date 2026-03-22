@@ -23,6 +23,12 @@ static int   rx_pos = 0;
 extern int8_t    g_cnn_input[64 * 128];
 extern result_t  g_results[INFERENCE_TOP_K_MAX];
 extern uint32_t  g_last_latency_us;
+extern uint32_t  g_last_spec_us;
+
+/* DWT microsecond timer helper — DWT must be enabled in main() before use.
+ * Handles 32-bit wraparound correctly via unsigned subtraction. */
+#define DWT_ELAPSED_US(t0) \
+    ((DWT->CYCCNT - (t0)) / (SystemCoreClock / 1000000U))
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                     */
@@ -47,10 +53,18 @@ void uart_cmd_send(const char *msg)
     MXC_UART_WriteTXFIFO(CMD_UART, &nl, 1);
 }
 
-/* Build the top-k JSON and send it */
+/* Build the top-k JSON and send it.
+ * Energy estimates use datasheet typical active-power figures:
+ *   CNN accelerator @ 200 MHz CNN clock : ~4.4 mW  →  4.4 nJ/µs
+ *   Cortex-M4       @ 120 MHz IPO       : ~10  mW  → 10   nJ/µs
+ */
 static void send_topk(const result_t *results, int k, uint32_t latency_us)
 {
-    char buf[512];
+    uint32_t cnn_nj  = latency_us      * 44 / 10;  /* 4.4 nJ/µs */
+    uint32_t spec_nj = g_last_spec_us  * 10;        /* 10  nJ/µs */
+    uint32_t tot_nj  = cnn_nj + spec_nj;
+
+    char buf[640];
     int  n = 0;
 
     n += snprintf(buf + n, sizeof(buf) - n,
@@ -70,7 +84,13 @@ static void send_topk(const result_t *results, int k, uint32_t latency_us)
                       digs, tens);
     }
     n += snprintf(buf + n, sizeof(buf) - n,
-                  "],\"latency_us\":%lu}", (unsigned long)latency_us);
+                  "],\"latency_us\":%lu,\"spec_us\":%lu"
+                  ",\"cnn_nj\":%lu,\"spec_nj\":%lu,\"total_nj\":%lu}",
+                  (unsigned long)latency_us,
+                  (unsigned long)g_last_spec_us,
+                  (unsigned long)cnn_nj,
+                  (unsigned long)spec_nj,
+                  (unsigned long)tot_nj);
 
     uart_cmd_send(buf);
 }
@@ -97,7 +117,7 @@ static void handle_load_pcm(int n_bytes)
     uart_cmd_send("{\"status\":\"ok\",\"state\":\"receiving_pcm\"}");
 
     /* Receive raw bytes directly into the audio capture buffer */
-    int16_t *pcm_buf = audio_capture_get_buffer(); /* 48000 int16 */
+    int16_t *pcm_buf = audio_capture_get_pcm_buf(); /* 48000 int16 */
     uint8_t *raw     = (uint8_t *)pcm_buf;
     int received = 0;
 
@@ -113,7 +133,11 @@ static void handle_load_pcm(int n_bytes)
 
     /* Compute spectrogram */
     uart_cmd_send("{\"status\":\"ok\",\"state\":\"computing_spectrogram\"}");
-    spectrogram_compute(pcm_buf, n_samples, g_cnn_input);
+    {
+        uint32_t _t0 = DWT->CYCCNT;
+        spectrogram_compute(pcm_buf, n_samples, g_cnn_input);
+        g_last_spec_us = DWT_ELAPSED_US(_t0);
+    }
 
     /* Run inference */
     uart_cmd_send("{\"status\":\"ok\",\"state\":\"inferring\"}");
@@ -136,7 +160,7 @@ static void dispatch(const char *line)
             uart_cmd_send("{\"status\":\"error\",\"kat\":\"fail\"}");
 
     } else if (strcmp(line, "STATUS") == 0) {
-        uart_cmd_send("{\"status\":\"ok\",\"state\":\"idle\",\"classes\":50}");
+        uart_cmd_send("{\"status\":\"ok\",\"state\":\"idle\",\"classes\":51}");
 
     } else if (strcmp(line, "INFER") == 0) {
         /* Run inference on whatever is already in g_cnn_input */
@@ -163,8 +187,20 @@ static void dispatch(const char *line)
         uart_cmd_send("{\"status\":\"ok\",\"state\":\"recording\"}");
         audio_capture_start();
         while (!audio_capture_is_done()) {}
+
+        /* RMS silence gate */
+        float rms = audio_capture_rms();
+        if (rms < AUDIO_RMS_THRESHOLD) {
+            uart_cmd_send("{\"status\":\"ok\",\"state\":\"silence\"}");
+            return;
+        }
+
         uart_cmd_send("{\"status\":\"ok\",\"state\":\"computing_spectrogram\"}");
-        spectrogram_compute(audio_capture_get_buffer(), 48000, g_cnn_input);
+        {
+            uint32_t _t0 = DWT->CYCCNT;
+            spectrogram_compute(audio_capture_get_buffer(), 48000, g_cnn_input);
+            g_last_spec_us = DWT_ELAPSED_US(_t0);
+        }
         uart_cmd_send("{\"status\":\"ok\",\"state\":\"inferring\"}");
         g_last_latency_us = inference_run(g_cnn_input, g_results, 3);
         send_topk(g_results, 3, g_last_latency_us);
@@ -183,10 +219,10 @@ static void dispatch(const char *line)
 
 void uart_cmd_init(void)
 {
-    /* UART0 is already initialised by Board_Init() / Console_Init() at
-     * 115200 baud.  No need to re-init here. */
-    printf("[uart_cmd] UART0 command interface ready at %u baud.\n",
-           UART_CMD_BAUD_NORMAL);
+    mxc_uart_regs_t *uart = CMD_UART;
+
+    MXC_UART_Init(uart, UART_CMD_BAUD_NORMAL, MXC_UART_APB_CLK);
+    printf("[uart_cmd] UART0 ready at %u baud.\n", UART_CMD_BAUD_NORMAL);
 }
 
 void uart_cmd_poll(void)
