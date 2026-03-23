@@ -46,15 +46,18 @@ static int16_t pcm_buf[AUDIO_CLIP_SAMPLES];       /* 96 KB — 3-s window */
 static volatile int  ring_pos        = 0;     /* next write position   */
 static volatile bool snapshot_ready  = false; /* 16000 new samples in  */
 static volatile bool capture_active  = false;
+static volatile int  dma_channel     = -1;    /* channel acquired by MXC_I2S_RXDMAConfig */
 
 /* ------------------------------------------------------------------ */
-/* DMA IRQ — overrides the weak default symbol in the startup table    */
+/* DMA IRQ — register handlers for channels 0 AND 1.                  */
+/* MXC_I2S_RXDMAConfig acquires the lowest free channel via            */
+/* MXC_DMA_AcquireChannel().  If the SPI/TFT driver holds channel 0   */
+/* during a display update, I2S falls back to channel 1.  Without a   */
+/* DMA1 handler the interrupt is lost and audio capture freezes.       */
 /* ------------------------------------------------------------------ */
 
-void DMA0_IRQHandler(void)
-{
-    MXC_DMA_Handler();
-}
+void DMA0_IRQHandler(void) { MXC_DMA_Handler(); }
+void DMA1_IRQHandler(void) { MXC_DMA_Handler(); }
 
 /* ------------------------------------------------------------------ */
 /* DMA completion callback                                              */
@@ -87,9 +90,17 @@ static void i2s_dma_callback(int ch, int err)
          */
         snapshot_ready = true;
     } else if (capture_active) {
-        /* Exact MSDK I2S_DMA pattern: release channel, then re-acquire */
-        MXC_DMA_ReleaseChannel(0);
-        MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
+        /* Release the channel we were given (ch), then re-acquire.
+         * Using ch (not hardcoded 0) ensures we free the right channel
+         * even if SPI/TFT pushed us off channel 0. */
+        MXC_DMA_ReleaseChannel(ch);
+        int new_ch = MXC_I2S_RXDMAConfig(dma_chunk,
+                                          CHUNK_SAMPLES * sizeof(int32_t));
+        if (new_ch >= 0) {
+            dma_channel = new_ch;
+            /* Enable NVIC for whichever channel was acquired */
+            NVIC_EnableIRQ((IRQn_Type)(DMA0_IRQn + new_ch));
+        }
     }
 }
 
@@ -151,11 +162,15 @@ void audio_capture_start(void)
     capture_active = true;
     memset(pcm_buf, 0, sizeof(pcm_buf));
 
-    MXC_DMA_ReleaseChannel(0);
-    int ret = MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
-    if (ret < E_NO_ERROR) {
-        printf("[audio] RXDMAConfig failed: %d\n", ret);
+    if (dma_channel >= 0)
+        MXC_DMA_ReleaseChannel(dma_channel);
+    int ch = MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
+    if (ch < E_NO_ERROR) {
+        printf("[audio] RXDMAConfig failed: %d\n", ch);
         snapshot_ready = true; /* prevent infinite wait */
+    } else {
+        dma_channel = ch;
+        NVIC_EnableIRQ((IRQn_Type)(DMA0_IRQn + ch));
     }
 }
 
@@ -184,8 +199,13 @@ void audio_capture_slide(void)
     snapshot_ready = false;
     capture_active = true;
 
-    MXC_DMA_ReleaseChannel(0);
-    MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
+    if (dma_channel >= 0)
+        MXC_DMA_ReleaseChannel(dma_channel);
+    int ch = MXC_I2S_RXDMAConfig(dma_chunk, CHUNK_SAMPLES * sizeof(int32_t));
+    if (ch >= 0) {
+        dma_channel = ch;
+        NVIC_EnableIRQ((IRQn_Type)(DMA0_IRQn + ch));
+    }
 }
 
 /* ------------------------------------------------------------------ */

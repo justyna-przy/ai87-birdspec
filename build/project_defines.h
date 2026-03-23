@@ -455,6 +455,7 @@
 #define FLIP_SCREEN 1
 #define SWAP_XY 1
 #define CAMERA_OV7692 1
+#define FONT_LiberationSans16x16 1
 #define MXC_SPI_V1 1
 #define MXC_SPI_V1 1
 #define ARM_MATH_CM4 1

@@ -62,10 +62,11 @@ static bool sd_mount(void)
 
 void sd_batch_init(void)
 {
-    /* SDHC peripheral is initialised by the MSDK SDHC library when
-     * LIB_SDHC=1 is set in project.mk.  We just mount here. */
-    if (!sd_mounted)
-        sd_mount();
+    /* Deferred mount: do NOT touch the SDHC/DMA at boot.
+     * Mounting immediately with no SD card inserted triggers SDHC DMA
+     * initialisation that can grab DMA channels and push I2S off channel 0,
+     * causing the DMA0_IRQHandler to miss I2S callbacks → screen freeze.
+     * sd_batch_run() mounts lazily on first BATCH command. */
 }
 
 void sd_batch_run(int max_samples)

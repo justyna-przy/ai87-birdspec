@@ -44,13 +44,16 @@ static int uart_getc(void)
     return (int)b;
 }
 
-/* Send a null-terminated string */
+/* Send a null-terminated string followed by newline.
+ * Uses MXC_UART_WriteCharacter which blocks per byte until TX FIFO has
+ * space — the same blocking path used by printf/_write.  This avoids
+ * the silent-drop risk of WriteTXFIFO and is proven to work. */
 void uart_cmd_send(const char *msg)
 {
-    MXC_UART_WriteTXFIFO(CMD_UART, (const uint8_t *)msg, strlen(msg));
-    /* Write a final newline */
-    const uint8_t nl = '\n';
-    MXC_UART_WriteTXFIFO(CMD_UART, &nl, 1);
+    const uint8_t *p = (const uint8_t *)msg;
+    while (*p)
+        MXC_UART_WriteCharacter(CMD_UART, *p++);
+    MXC_UART_WriteCharacter(CMD_UART, '\n');
 }
 
 /* Build the top-k JSON and send it.
@@ -121,12 +124,20 @@ static void handle_load_pcm(int n_bytes)
     uint8_t *raw     = (uint8_t *)pcm_buf;
     int received = 0;
 
+    /* 3-second idle timeout: abort if no byte arrives for 3 s.
+     * Prevents permanent hang when PCM bytes were lost due to FIFO
+     * overflow (e.g. device was not in UART mode when host started
+     * sending). */
+    uint32_t t_idle = DWT->CYCCNT;
     while (received < n_bytes) {
         int c = uart_getc();
         if (c >= 0) {
             raw[received++] = (uint8_t)c;
+            t_idle = DWT->CYCCNT;   /* reset idle timer on each byte */
+        } else if ((DWT->CYCCNT - t_idle) >= SystemCoreClock * 3U) {
+            uart_cmd_send("{\"status\":\"error\",\"msg\":\"PCM timeout — press SW4 before sending\"}");
+            return;
         }
-        /* No timeout — host is expected to send all bytes promptly */
     }
 
     int n_samples = n_bytes / 2; /* int16 samples */
@@ -219,10 +230,11 @@ static void dispatch(const char *line)
 
 void uart_cmd_init(void)
 {
-    mxc_uart_regs_t *uart = CMD_UART;
-
-    MXC_UART_Init(uart, UART_CMD_BAUD_NORMAL, MXC_UART_APB_CLK);
-    printf("[uart_cmd] UART0 ready at %u baud.\n", UART_CMD_BAUD_NORMAL);
+    /* Console_Init() (called in Board_Init before main) already initialised
+     * UART0 with MXC_UART_IBRO_CLK at 115200 baud.  Re-initialising here
+     * with MXC_UART_APB_CLK would set a wrong divisor and break the port. */
+    printf("[uart_cmd] UART0 ready at %u baud (IBRO clock).\n",
+           UART_CMD_BAUD_NORMAL);
 }
 
 void uart_cmd_poll(void)

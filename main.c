@@ -172,9 +172,12 @@ int main(void)
                 display_status("Listening... (filling 3s buffer)");
                 state = APP_LISTENING;
             }
-            break;
+            /* No delay in UART mode — must drain RX FIFO fast enough.
+             * At 115200 baud the 8-byte FIFO fills in ~694 µs; the 5 ms
+             * delay would cause overflow and drop command bytes. */
+            continue;
         }
 
-        MXC_Delay(MXC_DELAY_MSEC(5)); /* 200 Hz poll, low CPU overhead */
+        MXC_Delay(MXC_DELAY_MSEC(5)); /* listening mode: 200 Hz is fine */
     }
 }
