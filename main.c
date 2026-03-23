@@ -79,8 +79,12 @@ int main(void)
     MXC_ICC_Enable(MXC_ICC0);
     MXC_GCR->ipll_ctrl |= MXC_F_GCR_IPLL_CTRL_EN; /* IPLL for CNN     */
 
-    /* Enable DWT cycle counter for spectrogram timing */
+    /* Enable DWT cycle counter for spectrogram timing.
+     * The DWT has a software lock that must be cleared before writing
+     * its registers — without the unlock, CYCCNT stays at 0 when no
+     * debugger is attached (writes are silently ignored). */
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    *((volatile uint32_t *)0xE0001FB0) = 0xC5ACCE55U; /* DWT unlock */
     DWT->CYCCNT       = 0;
     DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
 

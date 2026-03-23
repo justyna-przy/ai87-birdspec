@@ -124,18 +124,26 @@ static void handle_load_pcm(int n_bytes)
     uint8_t *raw     = (uint8_t *)pcm_buf;
     int received = 0;
 
-    /* 3-second idle timeout: abort if no byte arrives for 3 s.
-     * Prevents permanent hang when PCM bytes were lost due to FIFO
-     * overflow (e.g. device was not in UART mode when host started
-     * sending). */
-    uint32_t t_idle = DWT->CYCCNT;
+    /* Idle-iteration timeout: abort if no byte arrives for too long.
+     * DWT CYCCNT cannot be relied on without a debugger attached, so
+     * we count consecutive empty-FIFO iterations instead.
+     * At 120 MHz with ~100 cycles per uart_getc call the loop runs
+     * ~1.2M times/second.  5 000 000 iterations ≈ 4 s of silence —
+     * well above the ~87 µs gap between back-to-back bytes at 115200
+     * baud, so normal reception never triggers this. */
+    uint32_t idle_count = 0;
     while (received < n_bytes) {
         int c = uart_getc();
         if (c >= 0) {
             raw[received++] = (uint8_t)c;
-            t_idle = DWT->CYCCNT;   /* reset idle timer on each byte */
-        } else if ((DWT->CYCCNT - t_idle) >= SystemCoreClock * 3U) {
-            uart_cmd_send("{\"status\":\"error\",\"msg\":\"PCM timeout — press SW4 before sending\"}");
+            idle_count = 0;         /* reset on every byte received */
+        } else if (++idle_count > 5000000UL) {
+            char _terr[96];
+            snprintf(_terr, sizeof(_terr),
+                     "{\"status\":\"error\",\"msg\":\"PCM timeout\","
+                     "\"received\":%d,\"expected\":%d}",
+                     received, n_bytes);
+            uart_cmd_send(_terr);
             return;
         }
     }

@@ -8,9 +8,9 @@
 #ifndef SPECIES_LABELS_H
 #define SPECIES_LABELS_H
 
-#define NUM_CLASSES 50
+#define NUM_CLASSES 51
 
-static const char *species_sci_name[50] = {
+static const char *species_sci_name[51] = {
     "accipiter_nisus",
     "acrocephalus_schoenobaenus",
     "aegithalos_caudatus",
@@ -21,6 +21,7 @@ static const char *species_sci_name[50] = {
     "carduelis_carduelis",
     "chloris_chloris",
     "cinclus_cinclus",
+    "coloeus_monedula",
     "columba_livia",
     "columba_palumbus",
     "corvus_corax",
@@ -63,7 +64,7 @@ static const char *species_sci_name[50] = {
     "tyto_alba",
 };
 
-static const char *species_common_name[50] = {
+static const char *species_common_name[51] = {
     "Eurasian Sparrowhawk",
     "Sedge Warbler",
     "Long-tailed Tit",
@@ -74,6 +75,7 @@ static const char *species_common_name[50] = {
     "European Goldfinch",
     "European Greenfinch",
     "White-throated Dipper",
+    "Western Jackdaw",
     "Rock Pigeon",
     "Wood Pigeon",
     "Common Raven",
