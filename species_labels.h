@@ -12,7 +12,7 @@
 
 static const char *species_sci_name[51] = {
     "accipiter_nisus",
-    "acrocephalus_schoenobaenus",
+    "acrocepBhalus_schoenobaenus",
     "aegithalos_caudatus",
     "alcedo_atthis",
     "anthus_pratensis",

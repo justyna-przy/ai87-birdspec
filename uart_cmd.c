@@ -166,6 +166,50 @@ static void handle_load_pcm(int n_bytes)
 }
 
 /* ------------------------------------------------------------------ */
+/* LOAD_SPEC handler — bypass spectrogram, load int8 tensor directly  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Receive 8192 raw int8 bytes directly into g_cnn_input, then run inference.
+ * Protocol: host sends "LOAD_SPEC 8192\n" then 8192 bytes.
+ * This bypasses spectrogram_compute entirely — used to isolate whether
+ * wrong predictions come from the spectrogram pipeline or the CNN weights.
+ */
+static void handle_load_spec(int n_bytes)
+{
+    if (n_bytes != 8192) {
+        uart_cmd_send("{\"status\":\"error\",\"msg\":\"LOAD_SPEC expects exactly 8192 bytes\"}");
+        return;
+    }
+
+    uart_cmd_send("{\"status\":\"ok\",\"state\":\"receiving_spec\"}");
+
+    uint8_t *raw = (uint8_t *)g_cnn_input;
+    int received = 0;
+    uint32_t idle_count = 0;
+
+    while (received < n_bytes) {
+        int c = uart_getc();
+        if (c >= 0) {
+            raw[received++] = (uint8_t)c;
+            idle_count = 0;
+        } else if (++idle_count > 5000000UL) {
+            char _terr[96];
+            snprintf(_terr, sizeof(_terr),
+                     "{\"status\":\"error\",\"msg\":\"SPEC timeout\","
+                     "\"received\":%d,\"expected\":%d}",
+                     received, n_bytes);
+            uart_cmd_send(_terr);
+            return;
+        }
+    }
+
+    uart_cmd_send("{\"status\":\"ok\",\"state\":\"inferring\"}");
+    g_last_latency_us = inference_run(g_cnn_input, g_results, 3);
+    send_topk(g_results, 3, g_last_latency_us);
+}
+
+/* ------------------------------------------------------------------ */
 /* Command dispatcher                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -192,6 +236,11 @@ static void dispatch(const char *line)
         if (k < 1) k = 1;
         if (k > INFERENCE_TOP_K_MAX) k = INFERENCE_TOP_K_MAX;
         send_topk(g_results, k, g_last_latency_us);
+
+    } else if (strncmp(line, "LOAD_SPEC", 9) == 0) {
+        int n_bytes = 0;
+        if (line[9] == ' ') n_bytes = atoi(line + 10);
+        handle_load_spec(n_bytes);
 
     } else if (strncmp(line, "LOAD_PCM", 8) == 0) {
         int n_bytes = 0;
