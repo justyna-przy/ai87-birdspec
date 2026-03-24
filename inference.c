@@ -85,14 +85,14 @@ uint32_t inference_run(const int8_t *tensor, result_t *results, int top_k)
     /* --- Boost CNN clock and start inference --- */
     cnn_time = 0;
     clock_boost();
-    uint32_t _t0 = DWT->CYCCNT;
     cnn_start();
 
-    /* Sleep until CNN_ISR fires (sets cnn_time) */
+    /* Sleep until CNN_ISR fires.
+     * CNN_ISR calls MXC_TMR_SW_Stop(CNN_INFERENCE_TIMER) and stores
+     * elapsed microseconds in cnn_time (hardware timer runs during sleep). */
     while (cnn_time == 0)
         MXC_LP_EnterSleepMode();
 
-    uint32_t _elapsed_us = (DWT->CYCCNT - _t0) / (SystemCoreClock / 1000000U);
     clock_throttle();
 
     /* --- Unload outputs and apply softmax --- */
@@ -116,7 +116,7 @@ uint32_t inference_run(const int8_t *tensor, result_t *results, int top_k)
         }
     }
 
-    return _elapsed_us; /* microseconds, measured by DWT */
+    return cnn_time; /* microseconds from MXC_TMR_SW_Stop(CNN_INFERENCE_TIMER) */
 }
 
 int inference_kat(void)

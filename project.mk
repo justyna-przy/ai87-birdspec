@@ -16,6 +16,12 @@ MFLOAT_ABI = hard
 # Define ARM_MATH_CM4 for CMSIS-DSP
 PROJ_CFLAGS += -DARM_MATH_CM4 -D__FPU_PRESENT=1
 
+# Use TMR0 as the CNN inference stopwatch.
+# cnn.c calls MXC_TMR_SW_Start/Stop around the CNN execution;
+# MXC_TMR_SW_Start self-initialises the timer so no separate MXC_TMR_Init is needed.
+# This gives accurate latency_us values independent of CPU sleep mode.
+PROJ_CFLAGS += -DCNN_INFERENCE_TIMER=MXC_TMR0
+
 # SPI version required by the EvKit TFT (ST7789V uses v1 API)
 MXC_SPI_VERSION = v1
 

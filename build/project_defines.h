@@ -448,6 +448,7 @@
 #define DEBUG 1
 #define ARM_MATH_CM4 1
 #define __FPU_PRESENT 1
+#define CNN_INFERENCE_TIMER MXC_TMR0
 #define MXC_ASSERT_ENABLE 1
 #define ARM_MATH_CM4 1
 #define LIB_BOARD 1
