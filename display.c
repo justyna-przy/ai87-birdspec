@@ -33,6 +33,64 @@ extern const unsigned char Liberation_Sans16x16[];
 #define COLOR_FG        0xFFFF  /* white */
 
 /* ------------------------------------------------------------------ */
+/* Display-name overrides (display only — does not affect JSON output) */
+/* NULL = use species_common_name as-is                                */
+/* ------------------------------------------------------------------ */
+static const char *display_name[51] = {
+    "Sparrowhawk",       /*  0 Eurasian Sparrowhawk        (20) */
+    NULL,                /*  1 Sedge Warbler */
+    NULL,                /*  2 Long-tailed Tit */
+    NULL,                /*  3 Common Kingfisher */
+    NULL,                /*  4 Meadow Pipit */
+    NULL,                /*  5 Common Swift */
+    NULL,                /*  6 Common Buzzard */
+    NULL,                /*  7 European Goldfinch */
+    NULL,                /*  8 European Greenfinch */
+    "Dipper",            /*  9 White-throated Dipper       (21) */
+    NULL,                /* 10 Western Jackdaw */
+    NULL,                /* 11 Rock Pigeon */
+    NULL,                /* 12 Wood Pigeon */
+    NULL,                /* 13 Common Raven */
+    NULL,                /* 14 Hooded Crow */
+    NULL,                /* 15 Rook */
+    NULL,                /* 16 Common Cuckoo */
+    NULL,                /* 17 Blue Tit */
+    "House Martin",      /* 18 Northern House Martin       (21) */
+    "GS Woodpecker",     /* 19 Great Spotted Woodpecker    (24) */
+    NULL,                /* 20 Yellowhammer */
+    NULL,                /* 21 Reed Bunting */
+    NULL,                /* 22 European Robin */
+    NULL,                /* 23 Peregrine Falcon */
+    NULL,                /* 24 Common Kestrel */
+    NULL,                /* 25 Common Chaffinch */
+    NULL,                /* 26 Eurasian Jay */
+    NULL,                /* 27 Barn Swallow */
+    NULL,                /* 28 White Wagtail */
+    NULL,                /* 29 Grey Wagtail */
+    NULL,                /* 30 Spotted Flycatcher */
+    "Non-bird",          /* 31 Non-bird / Background       (21) */
+    NULL,                /* 32 Northern Wheatear */
+    NULL,                /* 33 Great Tit */
+    NULL,                /* 34 House Sparrow */
+    NULL,                /* 35 Coal Tit */
+    NULL,                /* 36 Common Pheasant */
+    NULL,                /* 37 Chiffchaff */
+    NULL,                /* 38 Willow Warbler */
+    NULL,                /* 39 Eurasian Magpie */
+    NULL,                /* 40 Dunnock */
+    NULL,                /* 41 Goldcrest */
+    NULL,                /* 42 European Stonechat */
+    NULL,                /* 43 European Siskin */
+    "Collared Dove",     /* 44 Eurasian Collared Dove      (22) */
+    NULL,                /* 45 Common Starling */
+    NULL,                /* 46 Eurasian Blackcap */
+    NULL,                /* 47 Eurasian Wren */
+    NULL,                /* 48 Common Blackbird */
+    NULL,                /* 49 Song Thrush */
+    NULL,                /* 50 Barn Owl */
+};
+
+/* ------------------------------------------------------------------ */
 /* Helpers                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -64,7 +122,7 @@ void display_init(void)
     MXC_TFT_SetBackGroundColor(COLOR_BG);
     MXC_TFT_ClearScreen();
 
-    tft_print_at(2, HEADER_Y + 2, "BirdSpec -- Irish Bird Classifier");
+    tft_print_at(2, HEADER_Y + 2, "MicroBird");
 }
 
 void display_status(const char *msg)
@@ -116,9 +174,9 @@ void display_results(const result_t *results, int k, uint32_t latency_us)
     for (int i = 0; i < k && i < 3; i++) {
         int idx  = results[i].class_idx;
         int digs = (int)results[i].confidence;
-        int tens = (int)((results[i].confidence - digs) * 10.0f + 0.5f);
-        snprintf(line, sizeof(line), "%d. %-28s %2d.%d%%",
-                 i + 1, species_common_name[idx], digs, tens);
+        const char *name = (idx < 51 && display_name[idx]) ? display_name[idx]
+                                                            : species_common_name[idx];
+        snprintf(line, sizeof(line), "%d. %s (%d%%)", i + 1, name, digs);
         tft_print_at(2, RESULTS_Y + i * RESULT_LINE_H + 2, line);
     }
 
