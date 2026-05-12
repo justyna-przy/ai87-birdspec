@@ -14,6 +14,7 @@
 #define __CNN_H__
 
 #include <stdint.h>
+#include "pmon_gpio.h"
 typedef int32_t q31_t;
 typedef int16_t q15_t;
 
@@ -42,10 +43,10 @@ typedef int16_t q15_t;
 
 /* Port pin actions used to signal that processing is active */
 
-#define CNN_START LED_On(1)
-#define CNN_COMPLETE LED_Off(1)
-#define SYS_START LED_On(0)
-#define SYS_COMPLETE LED_Off(0)
+#define CNN_START pmon_cnn_start()
+#define CNN_COMPLETE pmon_cnn_complete()
+#define SYS_START pmon_sys_start()
+#define SYS_COMPLETE pmon_sys_complete()
 
 /* Run software SoftMax on unloaded data */
 void softmax_q17p14_q15(const q31_t * vec_in, const uint16_t dim_vec, q15_t * p_out);

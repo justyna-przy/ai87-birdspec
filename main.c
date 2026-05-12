@@ -28,6 +28,7 @@
 #include "audio_capture.h"
 #include "spectrogram.h"
 #include "display.h"
+#include "pmon_gpio.h"
 #include "uart_cmd.h"
 #include "sd_batch.h"
 
@@ -39,9 +40,11 @@ int8_t   g_cnn_input[64 * 128];
 result_t g_results[INFERENCE_TOP_K_MAX];
 uint32_t g_last_latency_us = 0;
 uint32_t g_last_spec_us    = 0;
+uint32_t g_last_total_us   = 0;
 
 /* Keep TMR0 dedicated to CNN latency (cnn.c / CNN_INFERENCE_TIMER). */
 #define SPEC_TIMER MXC_TMR1
+#define TOTAL_TIMER MXC_TMR2
 
 /* ------------------------------------------------------------------ */
 /* State machine                                                        */
@@ -93,6 +96,7 @@ int main(void)
 
     /* --- Peripheral init ------------------------------------------- */
     display_init();
+    pmon_trig_init();
     display_status("Loading CNN...");
 
     inference_init();
@@ -129,6 +133,7 @@ int main(void)
                     display_status("Listening... (quiet)");
                 } else {
                     /* Compute spectrogram */
+                    MXC_TMR_SW_Start(TOTAL_TIMER);
                     MXC_TMR_SW_Start(SPEC_TIMER);
                     spectrogram_compute(audio_capture_get_buffer(),
                                         AUDIO_CLIP_SAMPLES, g_cnn_input);
@@ -137,15 +142,17 @@ int main(void)
                     /* Run CNN inference */
                     g_last_latency_us = inference_run(g_cnn_input,
                                                       g_results, 3);
+                    g_last_total_us = MXC_TMR_SW_Stop(TOTAL_TIMER);
 
                     /* Energy estimate for device-side DSP + CNN only */
                     {
                         uint32_t cnn_nj  = g_last_latency_us * 44 / 10; /* 4.4 nJ/us */
                         uint32_t spec_nj = g_last_spec_us * 10;         /* 10  nJ/us */
                         uint32_t tot_nj  = cnn_nj + spec_nj;
-                        printf("[energy] mode=listen spec_us=%lu cnn_us=%lu spec_nj=%lu cnn_nj=%lu total_nj=%lu\n",
+                        printf("[energy_estimate] mode=listen kind=duration_based spec_us=%lu cnn_us=%lu total_us=%lu spec_nj=%lu cnn_nj=%lu total_nj=%lu\n",
                                (unsigned long)g_last_spec_us,
                                (unsigned long)g_last_latency_us,
+                               (unsigned long)g_last_total_us,
                                (unsigned long)spec_nj,
                                (unsigned long)cnn_nj,
                                (unsigned long)tot_nj);
@@ -155,10 +162,11 @@ int main(void)
                     display_spectrogram(g_cnn_input);
                     display_results(g_results, 3, g_last_latency_us);
 
-                    printf("[main] RMS=%.0f  lat=%lu us  spec=%lu us\n",
+                    printf("[main] RMS=%.0f  cnn=%lu us  spec=%lu us  total=%lu us\n",
                            (double)rms,
                            (unsigned long)g_last_latency_us,
-                           (unsigned long)g_last_spec_us);
+                           (unsigned long)g_last_spec_us,
+                           (unsigned long)g_last_total_us);
                 }
 
                 /* Slide window forward 1 s and re-arm DMA */

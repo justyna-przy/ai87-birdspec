@@ -1,0 +1,8 @@
+[birdspec_api] DUT UART:  COM18 @ 115200
+[birdspec_api] PMON UART: COM19 @ 115200
+[birdspec_api] HTTP:      http://0.0.0.0:5000
+[birdspec_api] Press SW4 on the EVKIT to enter UART mode before calling the API.
+[birdspec_api] Existing inference endpoints remain available.
+[birdspec_api] PMON endpoints require the PMON USB serial port and PMON triggered mode support.
+ * Serving Flask app 'birdspec_api'
+ * Debug mode: off

@@ -18,6 +18,21 @@ typedef struct {
 void inference_init(void);
 
 /*
+ * Copy a prepared 64x128 int8 spectrogram tensor into the CNN input SRAM.
+ * This lets PMON measurement code isolate input loading from accelerator
+ * execution.
+ */
+void inference_load_input(const int8_t *tensor);
+
+/*
+ * Run the CNN accelerator only on whatever tensor is already loaded into
+ * the CNN input SRAM. This excludes output unload and software softmax/top-k.
+ *
+ * Returns the accelerator runtime in microseconds (from cnn_time ISR).
+ */
+uint32_t inference_run_cnn_only(void);
+
+/*
  * Run a single inference on a 64×128 int8 tensor (8192 bytes, CHW layout,
  * channel-0 only).  Boosts CNN clock to PLL/DIV1 (200 MHz), runs, then
  * restores PLL/DIV4.  Fills `results[0..top_k-1]` sorted descending by

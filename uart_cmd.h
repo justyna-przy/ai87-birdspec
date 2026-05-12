@@ -13,8 +13,14 @@
  *   STATUS\n            — return current device state as JSON
  *   LOAD_PCM <bytes>\n  — followed immediately by <bytes> raw int16-LE PCM
  *                         (48000 samples = 96000 bytes for a 3 s clip at 16 kHz)
+ *   LOAD_PCM_ONLY <bytes>\n — load raw PCM into the device buffer only
+ *   PREP_SPEC\n         — compute on-device spectrogram from the current PCM buffer only
  *   BATCH\n             — mount SD card and run batch evaluation
  *   KAT\n               — run known-answer test
+ *   PMON_INFO\n         — print PMON wiring / firmware evidence summary
+ *   PMON_CNN\n          — emit PMON CNN Power Mode windows for DW1 CNN energy
+ *   PMON_FULL [n]\n     — emit PMON System Power Mode window for full path,
+ *                         repeating n times (default 10) on the current PCM
  *
  * Device → Host (all responses are JSON on a single line + '\n'):
  *   {"status":"ok","state":"idle"}

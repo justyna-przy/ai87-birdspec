@@ -70,18 +70,18 @@ void inference_init(void)
     printf("[inference] Weights loaded, CNN ready.\n");
 }
 
-uint32_t inference_run(const int8_t *tensor, result_t *results, int top_k)
+void inference_load_input(const int8_t *tensor)
 {
-    if (top_k > INFERENCE_TOP_K_MAX) top_k = INFERENCE_TOP_K_MAX;
-    if (top_k < 1)                    top_k = 1;
-
     /* --- Load input into CNN input SRAM (quadrant 0, 0x51800000) --- */
     /* Input is 64×128 int8 = 8192 bytes = 2048 uint32_t words.
      * The CNN accelerator reads data in 32-bit words; casting int8* to
      * uint32_t* is safe here because the buffer is word-aligned and the
      * accelerator treats it as raw bytes regardless of sign. */
     memcpy32((uint32_t *)0x51800000, (const uint32_t *)tensor, 2048);
+}
 
+uint32_t inference_run_cnn_only(void)
+{
     /* --- Boost CNN clock and start inference --- */
     cnn_time = 0;
     clock_boost();
@@ -94,6 +94,17 @@ uint32_t inference_run(const int8_t *tensor, result_t *results, int top_k)
         MXC_LP_EnterSleepMode();
 
     clock_throttle();
+
+    return cnn_time; /* microseconds from MXC_TMR_SW_Stop(CNN_INFERENCE_TIMER) */
+}
+
+uint32_t inference_run(const int8_t *tensor, result_t *results, int top_k)
+{
+    if (top_k > INFERENCE_TOP_K_MAX) top_k = INFERENCE_TOP_K_MAX;
+    if (top_k < 1)                    top_k = 1;
+
+    inference_load_input(tensor);
+    cnn_time = inference_run_cnn_only();
 
     /* --- Unload outputs and apply softmax --- */
     cnn_unload((uint32_t *)ml_data);
@@ -125,14 +136,8 @@ int inference_kat(void)
     static const uint32_t input_0[]     = SAMPLE_INPUT_0;
     static const uint32_t sample_out[]  = SAMPLE_OUTPUT;
 
-    memcpy32((uint32_t *)0x51800000, input_0, 2048);
-
-    cnn_time = 0;
-    clock_boost();
-    cnn_start();
-    while (cnn_time == 0)
-        MXC_LP_EnterSleepMode();
-    clock_throttle();
+    inference_load_input((const int8_t *)input_0);
+    cnn_time = inference_run_cnn_only();
 
     /* Verify output against known-answer */
     const uint32_t    *ptr = sample_out;

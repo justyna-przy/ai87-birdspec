@@ -115,5 +115,5 @@ C:/Users/shado/Year3Projects/Block3.2/EmbeddedHardware/msdk/Examples/MAX78002/ai
  C:/Users/shado/Year3Projects/Block3.2/EmbeddedHardware/msdk/Libraries/PeriphDrivers/Include/MAX78002/wut.h \
  C:/Users/shado/Year3Projects/Block3.2/EmbeddedHardware/msdk/Libraries/CMSIS/Device/Maxim/MAX78002/Include/wut_regs.h \
  C:/Users/shado/Year3Projects/Block3.2/EmbeddedHardware/msdk/Libraries/PeriphDrivers/Include/MAX78002/uart.h \
- uart_cmd.h inference.h cnn.h spectrogram.h audio_capture.h \
+ uart_cmd.h inference.h cnn.h pmon_gpio.h spectrogram.h audio_capture.h \
  species_labels.h sd_batch.h
