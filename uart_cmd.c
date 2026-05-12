@@ -27,8 +27,7 @@ extern uint32_t  g_last_spec_us;
 
 /* DWT microsecond timer helper — DWT must be enabled in main() before use.
  * Handles 32-bit wraparound correctly via unsigned subtraction. */
-#define DWT_ELAPSED_US(t0) \
-    ((DWT->CYCCNT - (t0)) / (SystemCoreClock / 1000000U))
+#define SPEC_TIMER MXC_TMR1
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                     */
@@ -98,6 +97,23 @@ static void send_topk(const result_t *results, int k, uint32_t latency_us)
     uart_cmd_send(buf);
 }
 
+/* Console log for device-side DSP + CNN energy estimate.
+ * This does not alter the JSON protocol consumed by the host API. */
+static void log_energy_metrics(const char *mode, uint32_t spec_us, uint32_t cnn_us)
+{
+    uint32_t cnn_nj  = cnn_us  * 44 / 10;  /* 4.4 nJ/us */
+    uint32_t spec_nj = spec_us * 10;       /* 10  nJ/us */
+    uint32_t tot_nj  = cnn_nj + spec_nj;
+
+    printf("[energy] mode=%s spec_us=%lu cnn_us=%lu spec_nj=%lu cnn_nj=%lu total_nj=%lu\n",
+           mode,
+           (unsigned long)spec_us,
+           (unsigned long)cnn_us,
+           (unsigned long)spec_nj,
+           (unsigned long)cnn_nj,
+           (unsigned long)tot_nj);
+}
+
 /* ------------------------------------------------------------------ */
 /* LOAD_PCM handler                                                     */
 /* ------------------------------------------------------------------ */
@@ -153,9 +169,9 @@ static void handle_load_pcm(int n_bytes)
     /* Compute spectrogram */
     uart_cmd_send("{\"status\":\"ok\",\"state\":\"computing_spectrogram\"}");
     {
-        uint32_t _t0 = DWT->CYCCNT;
+        MXC_TMR_SW_Start(SPEC_TIMER);
         spectrogram_compute(pcm_buf, n_samples, g_cnn_input);
-        g_last_spec_us = DWT_ELAPSED_US(_t0);
+        g_last_spec_us = MXC_TMR_SW_Stop(SPEC_TIMER);
     }
 
     /* Run inference */
@@ -265,12 +281,13 @@ static void dispatch(const char *line)
 
         uart_cmd_send("{\"status\":\"ok\",\"state\":\"computing_spectrogram\"}");
         {
-            uint32_t _t0 = DWT->CYCCNT;
+            MXC_TMR_SW_Start(SPEC_TIMER);
             spectrogram_compute(audio_capture_get_buffer(), 48000, g_cnn_input);
-            g_last_spec_us = DWT_ELAPSED_US(_t0);
+            g_last_spec_us = MXC_TMR_SW_Stop(SPEC_TIMER);
         }
         uart_cmd_send("{\"status\":\"ok\",\"state\":\"inferring\"}");
         g_last_latency_us = inference_run(g_cnn_input, g_results, 3);
+        log_energy_metrics("rec", g_last_spec_us, g_last_latency_us);
         send_topk(g_results, 3, g_last_latency_us);
 
     } else {

@@ -40,6 +40,9 @@ result_t g_results[INFERENCE_TOP_K_MAX];
 uint32_t g_last_latency_us = 0;
 uint32_t g_last_spec_us    = 0;
 
+/* Keep TMR0 dedicated to CNN latency (cnn.c / CNN_INFERENCE_TIMER). */
+#define SPEC_TIMER MXC_TMR1
+
 /* ------------------------------------------------------------------ */
 /* State machine                                                        */
 /* ------------------------------------------------------------------ */
@@ -83,11 +86,6 @@ int main(void)
      * The DWT has a software lock that must be cleared before writing
      * its registers — without the unlock, CYCCNT stays at 0 when no
      * debugger is attached (writes are silently ignored). */
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    *((volatile uint32_t *)0xE0001FB0) = 0xC5ACCE55U; /* DWT unlock */
-    DWT->CYCCNT       = 0;
-    DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
-
     MXC_Delay(MXC_DELAY_MSEC(200));
 
     printf("\n\n=== BirdSpec MAX78002 ===\n");
@@ -131,15 +129,27 @@ int main(void)
                     display_status("Listening... (quiet)");
                 } else {
                     /* Compute spectrogram */
-                    uint32_t t0 = DWT->CYCCNT;
+                    MXC_TMR_SW_Start(SPEC_TIMER);
                     spectrogram_compute(audio_capture_get_buffer(),
                                         AUDIO_CLIP_SAMPLES, g_cnn_input);
-                    g_last_spec_us = (DWT->CYCCNT - t0)
-                                     / (SystemCoreClock / 1000000U);
+                    g_last_spec_us = MXC_TMR_SW_Stop(SPEC_TIMER);
 
                     /* Run CNN inference */
                     g_last_latency_us = inference_run(g_cnn_input,
                                                       g_results, 3);
+
+                    /* Energy estimate for device-side DSP + CNN only */
+                    {
+                        uint32_t cnn_nj  = g_last_latency_us * 44 / 10; /* 4.4 nJ/us */
+                        uint32_t spec_nj = g_last_spec_us * 10;         /* 10  nJ/us */
+                        uint32_t tot_nj  = cnn_nj + spec_nj;
+                        printf("[energy] mode=listen spec_us=%lu cnn_us=%lu spec_nj=%lu cnn_nj=%lu total_nj=%lu\n",
+                               (unsigned long)g_last_spec_us,
+                               (unsigned long)g_last_latency_us,
+                               (unsigned long)spec_nj,
+                               (unsigned long)cnn_nj,
+                               (unsigned long)tot_nj);
+                    }
 
                     /* Update display */
                     display_spectrogram(g_cnn_input);
